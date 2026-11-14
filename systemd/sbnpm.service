@@ -1,0 +1,28 @@
+[Unit]
+Description=sbnpm (sing-box Reality Vision + Hysteria2 + TUIC)
+After=network-online.target sbnpm-origin.service
+Wants=network-online.target sbnpm-origin.service
+
+[Service]
+Type=exec
+User=sbnpm
+Group=sbnpm
+ExecStartPre=+/usr/local/bin/sbnpm _apply-ports
+ExecStart=/opt/sbnpm/sing-box run -c /etc/sbnpm/config.json
+ExecStopPost=+/usr/local/bin/sbnpm _clear-ports
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=Synchronize NPM/Let's Encrypt certs to sbnpm, restart only if changed
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/sbnpm sync-cert

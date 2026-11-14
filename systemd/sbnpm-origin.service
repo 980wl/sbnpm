@@ -1,0 +1,17 @@
+[Unit]
+Description=Loopback HTTPS origin for sbnpm Reality
+ConditionPathExists=/etc/sbnpm/origin.json
+
+[Service]
+Type=exec
+User=sbnpm
+Group=sbnpm
+ExecStart=/usr/local/bin/sbnpm _serve-origin
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
