@@ -58,7 +58,11 @@ outbounds = [
     {'type': 'hysteria2', 'tag': 'hy2', 'server': '127.0.0.1', 'server_ports': ['31000:31001'],
      'hop_interval': '5s', 'password': state['hy2_password'], 'tls': tls},
     {'type': 'tuic', 'tag': 'tuic', 'server': '127.0.0.1', 'server_port': 31002,
-     'uuid': state['tuic_uuid'], 'password': state['tuic_password'], 'congestion_control': 'bbr', 'tls': tls},
+     'uuid': state['tuic_uuid'], 'password': state['tuic_password'], 'congestion_control': 'bbr',
+     # TUIC runs on QUIC, which requires ALPN: the server only offers h3,
+     # so a client that offers no ALPN is rejected with
+     # CRYPTO_ERROR 0x178 "tls: no application protocol".
+     'tls': {**tls, 'alpn': ['h3']}},
 ]
 config = {
     'inbounds': [{'type': 'mixed', 'tag': item['tag'] + '-in',
