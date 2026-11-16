@@ -8,11 +8,9 @@ cert_dir="/etc/letsencrypt/live/$domain"
 [[ ! -e /etc/sbnpm/state.json && ! -e $ca && ! -e $cert_dir ]]
 scratch="$(mktemp -d)"
 client_pid=
-http_pid=
 
 cleanup() {
     [[ -z $client_pid ]] || kill "$client_pid" 2>/dev/null || true
-    [[ -z $http_pid ]] || kill "$http_pid" 2>/dev/null || true
     if [[ -f /etc/sbnpm/state.json ]]; then /usr/local/bin/sbnpm remove --yes || true; fi
     rm -f -- "$ca"
     rm -rf -- "$scratch" "$cert_dir"
@@ -75,15 +73,27 @@ config = {
 with open(sys.argv[1], 'w') as dst:
     json.dump(config, dst)
 PY
-printf 'sbnpm-smoke-ok\n' > "$scratch/probe"
-python3 -m http.server 19500 --bind 127.0.0.1 --directory "$scratch" >"$scratch/http.log" 2>&1 &
-http_pid=$!
+# Probe through the proxy must use a public destination: the server routes
+# private IPs (including 127.0.0.1) to the block outbound, so a loopback
+# probe target can never answer through any of the three protocols.
 /opt/sbnpm/sing-box run -c "$scratch/client.json" >"$scratch/client.log" 2>&1 &
 client_pid=$!
+wait_for_port() {
+    local port=$1 i=0
+    while (( i < 50 )); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then return 0; fi
+        sleep 0.2; i=$((i+1))
+    done
+    echo "client mixed inbound 127.0.0.1:$port did not start" >&2
+    cat "$scratch/client.log"; exit 1
+}
+for port in 19281 19282 19283; do wait_for_port "$port"; done
 for port in 19281 19282 19283; do
     curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 10 \
-        --noproxy '' --proxy "socks5h://127.0.0.1:$port" http://127.0.0.1:19500/probe |
-        grep -x 'sbnpm-smoke-ok' || { cat "$scratch/client.log"; exit 1; }
+        --noproxy '' --proxy "socks5h://127.0.0.1:$port" https://example.com/ |
+        grep -i 'Example Domain' || {
+            journalctl -u sbnpm -u sbnpm-origin -n 80 --no-pager || true
+            cat "$scratch/client.log"; exit 1; }
 done
 pid="$(systemctl show -p MainPID --value sbnpm.service)"
 version="$("/proc/$pid/exe" version | awk 'NR==1 {print $3}')"
