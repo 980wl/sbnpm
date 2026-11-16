@@ -27,10 +27,11 @@ import time
 import urllib.parse
 import uuid
 
-SCRIPT_VERSION = 'v2.6'
+SCRIPT_VERSION = 'v2.7'
 BASE = Path('/etc/sbnpm')
 CFG = BASE / 'config.json'
 STATE = BASE / 'state.json'
+QR_DIR = BASE / 'qr'
 CERT_DIR = BASE / 'tls'
 SERVICE = 'sbnpm.service'
 SYNC_TIMER = 'sbnpm-cert-sync.timer'
@@ -1609,6 +1610,26 @@ def print_qr(qrencode: str, link: str, label: str):
         print(f'{label} 二维码生成失败，可复制上方链接。', file=sys.stderr)
 
 
+def write_qr_png(qrencode: str, link: str, name: str) -> Path | None:
+    """Write one real QR image for a link.
+
+    Terminal QR art is drawn with half-block characters, so its modules
+    only come out square when the terminal's line geometry is exact; a
+    terminal that adds gaps between lines breaks the grid and no scanner
+    can read it. The PNG is the scannable copy. Best-effort: any failure
+    only warns and never breaks the terminal output.
+    """
+    try:
+        QR_DIR.mkdir(parents=True, exist_ok=True)
+        path = QR_DIR / f'{name}.png'
+        run([qrencode, '-t', 'PNG', '-s', '10', '-m', '4', '-o', str(path)],
+            input_data=link, timeout=10)
+        return path
+    except (Error, OSError):
+        print(f'{name} 二维码图片写入失败，可复制链接。', file=sys.stderr)
+        return None
+
+
 def cmd_nodes(args):
     ensure_root()
     s = read_state()
@@ -1624,11 +1645,26 @@ def cmd_nodes(args):
     qrencode = shutil.which('qrencode') if args.qr else None
     if args.qr and qrencode is None:
         print('缺少 qrencode，暂时只显示链接。安装命令：apt-get install -y qrencode', file=sys.stderr)
-    for name in (args.protocol,) if args.protocol else PROTOCOLS:
+    shown = (args.protocol,) if args.protocol else tuple(PROTOCOLS)
+    for name in shown:
         link = links[name]
         print(link)
         if qrencode:
             print_qr(qrencode, link, name)
+    if qrencode:
+        saved = []
+        for name in shown:
+            path = write_qr_png(qrencode, links[name], name)
+            if path is not None:
+                saved.append(path.name)
+        try:
+            (QR_DIR / 'nodes.txt').write_text(
+                '\n'.join(links[name] for name in shown) + '\n', encoding='utf-8')
+            saved.append('nodes.txt')
+        except OSError:
+            print('完整链接文件 nodes.txt 写入失败，可复制终端显示的链接。', file=sys.stderr)
+        if saved:
+            print(f'二维码图片与完整链接已保存到 {QR_DIR}（{"、".join(saved)}），可用 SFTP 下载后扫码。')
 
 
 def hopping_ports(s: dict):
@@ -1697,6 +1733,9 @@ def cmd_hop_profile(args):
                 print('缺少 qrencode，暂时只显示链接。安装命令：apt-get install -y qrencode', file=sys.stderr)
             else:
                 print_qr(qrencode, hop_link, 'hy2-hop')
+                path = write_qr_png(qrencode, hop_link, 'hy2-hop')
+                if path is not None:
+                    print(f'二维码图片已保存到 {path}，可用 SFTP 下载后扫码。')
     else:
         print(json.dumps(make_hop_profile(s, ports, hop_interval=hop_interval), ensure_ascii=False, indent=2))
 
