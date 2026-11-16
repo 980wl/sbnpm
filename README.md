@@ -78,7 +78,7 @@ Reality 主端口与备用端口不能与 HTTPS 握手入口使用同一个 TCP 
 
 ## 查看运行版本与节点二维码
 
-输入 `sb` 后，菜单顶部显示脚本版本 `v2.7` 及 systemd 主进程实际运行的 sing-box 版本。服务停止时显示「未运行」。选择 **2**，VLESS Reality、Hysteria2 和 TUIC v5 的主端口节点分别显示链接和二维码。用客户端的扫码导入功能扫描对应二维码。二维码包含与链接相同的节点凭据，在 VPS 上由 `qrencode` 生成。终端较窄时可加宽窗口；也可以复制链接导入。同时会在 `/etc/sbnpm/qr/` 写出真正的二维码图片（`reality.png`、`hy2.png`、`tuic.png`）与完整链接文件 `nodes.txt`，可用 SFTP 下载后扫码；终端里显示的字符画二维码在某些终端上会因行距变形而扫不出来，图片不受影响。
+输入 `sb` 后，菜单顶部显示脚本版本 `v2.6` 及 systemd 主进程实际运行的 sing-box 版本。服务停止时显示「未运行」。选择 **2**，VLESS Reality、Hysteria2 和 TUIC v5 的主端口节点分别显示链接和二维码。用客户端的扫码导入功能扫描对应二维码。二维码包含与链接相同的节点凭据，在 VPS 上由 `qrencode` 生成。终端较窄时可加宽窗口；也可以复制链接导入。
 
 ```bash
 sudo sbnpm nodes --qr

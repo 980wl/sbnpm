@@ -160,66 +160,17 @@ class ConfigTests(unittest.TestCase):
 
     def test_primary_nodes_send_each_link_to_local_qrencode(self):
         links = sbnpm.make_links(self.s)
-        with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(sbnpm, 'ensure_root'), \
+        with mock.patch.object(sbnpm, 'ensure_root'), \
              mock.patch.object(sbnpm, 'read_state', return_value=self.s), \
              mock.patch.object(sbnpm.shutil, 'which', return_value='/usr/bin/qrencode'), \
-             mock.patch.object(sbnpm, 'QR_DIR', Path(tmp)), \
              mock.patch.object(sbnpm, 'run', side_effect=[
                  SimpleNamespace(stdout=f'QR-{i}\n') for i in range(3)
-             ] + [SimpleNamespace(stdout='') for _ in range(3)]) as run, \
-             contextlib.redirect_stdout(io.StringIO()) as out:
-            sbnpm.cmd_nodes(SimpleNamespace(port=None, protocol=None, qr=True))
-            nodes_txt = (Path(tmp) / 'nodes.txt').read_text(encoding='utf-8')
-            summary = out.getvalue().splitlines()[-1]
-        terminal_calls = run.call_args_list[:3]
-        png_calls = run.call_args_list[3:]
-        self.assertEqual([c.kwargs['input_data'] for c in terminal_calls], links)
-        self.assertTrue(all(c.args[0][0] == '/usr/bin/qrencode' for c in run.call_args_list))
-        self.assertTrue(all('ANSIUTF8' in c.args[0] for c in terminal_calls))
-        self.assertEqual([c.kwargs['input_data'] for c in png_calls], links)
-        self.assertTrue(all(c.args[0][1:3] == ['-t', 'PNG'] for c in png_calls))
-        self.assertEqual([c.args[0][-1] for c in png_calls],
-                         [str(Path(tmp) / f'{name}.png') for name in ('reality', 'hy2', 'tuic')])
-        self.assertEqual(nodes_txt, '\n'.join(links) + '\n')
-        self.assertEqual(out.getvalue().splitlines(),
-                         [value for i, link in enumerate(links) for value in (link, f'QR-{i}')]
-                         + [summary])
-        self.assertEqual(summary,
-                         f'二维码图片与完整链接已保存到 {tmp}（reality.png、hy2.png、tuic.png、nodes.txt），可用 SFTP 下载后扫码。')
-
-    def test_nodes_qr_png_failure_still_prints_links(self):
-        links = sbnpm.make_links(self.s)
-        with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(sbnpm, 'ensure_root'), \
-             mock.patch.object(sbnpm, 'read_state', return_value=self.s), \
-             mock.patch.object(sbnpm.shutil, 'which', return_value='/usr/bin/qrencode'), \
-             mock.patch.object(sbnpm, 'QR_DIR', Path(tmp)), \
-             mock.patch.object(sbnpm, 'run', side_effect=[
-                 SimpleNamespace(stdout=f'QR-{i}\n') for i in range(3)
-             ] + [sbnpm.Error('qrencode 失败') for _ in range(3)]), \
-             contextlib.redirect_stdout(io.StringIO()) as out, \
-             contextlib.redirect_stderr(io.StringIO()) as err:
-            sbnpm.cmd_nodes(SimpleNamespace(port=None, protocol=None, qr=True))
-        self.assertEqual(out.getvalue().splitlines()[:6],
-                         [value for i, link in enumerate(links) for value in (link, f'QR-{i}')])
-        self.assertIn('nodes.txt', out.getvalue())
-        self.assertIn('二维码图片写入失败', err.getvalue())
-
-    def test_hop_qr_writes_png(self):
-        s = {**self.s, 'extra_ports': {'hy2': [(30000, 30005)]}}
-        with tempfile.TemporaryDirectory() as tmp, \
-             mock.patch.object(sbnpm, 'read_state', return_value=s), \
-             mock.patch.object(sbnpm.shutil, 'which', return_value='/usr/bin/qrencode'), \
-             mock.patch.object(sbnpm, 'QR_DIR', Path(tmp)), \
-             mock.patch.object(sbnpm, 'run', side_effect=[
-                 SimpleNamespace(stdout='QR\n'), SimpleNamespace(stdout=''),
              ]) as run, contextlib.redirect_stdout(io.StringIO()) as out:
-            sbnpm.cmd_hop_profile(SimpleNamespace(format='uri', qr=True))
-        self.assertEqual(len(run.call_args_list), 2)
-        self.assertEqual(run.call_args_list[1].args[0][:3], ['/usr/bin/qrencode', '-t', 'PNG'])
-        self.assertEqual(run.call_args_list[1].args[0][-1], str(Path(tmp) / 'hy2-hop.png'))
-        self.assertIn(f'二维码图片已保存到 {tmp}/hy2-hop.png', out.getvalue())
+            sbnpm.cmd_nodes(SimpleNamespace(port=None, protocol=None, qr=True))
+        self.assertEqual([c.kwargs['input_data'] for c in run.call_args_list], links)
+        self.assertTrue(all(c.args[0][0] == '/usr/bin/qrencode' for c in run.call_args_list))
+        self.assertEqual(out.getvalue().splitlines(),
+                         [value for i, link in enumerate(links) for value in (link, f'QR-{i}')])
 
     def test_nodes_without_qr_keeps_plain_links(self):
         with mock.patch.object(sbnpm, 'ensure_root'), \
