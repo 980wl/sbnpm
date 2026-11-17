@@ -664,6 +664,24 @@ class CoreUpdateTests(unittest.TestCase):
             with self.assertRaisesRegex(sbnpm.Error, 'SHA-256'):
                 sbnpm.latest_stable_core()
 
+    def test_github_token_auth_header_only_for_api(self):
+        api_url = sbnpm.RELEASE_API
+        asset_url = f'{sbnpm.RELEASE_URL}/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz'
+        with mock.patch.dict(sbnpm.os.environ, {'GITHUB_TOKEN': 'ghp_test'}), \
+             mock.patch.object(sbnpm, 'run') as run_mock:
+            run_mock.return_value = SimpleNamespace(stdout='{}')
+            sbnpm.curl_release('-H', 'Accept: application/vnd.github+json', api_url,
+                               timeout=20, limit=1024)
+            self.assertIn('Authorization: Bearer ghp_test', run_mock.call_args.args[0])
+            sbnpm.curl_release('--output', '/tmp/x.tar.gz', asset_url, timeout=120, limit=1024)
+            self.assertNotIn('Authorization: Bearer ghp_test', run_mock.call_args.args[0])
+        with mock.patch.dict(sbnpm.os.environ, {}, clear=True), \
+             mock.patch.object(sbnpm, 'run') as run_mock:
+            run_mock.return_value = SimpleNamespace(stdout='{}')
+            sbnpm.curl_release('-H', 'Accept: application/vnd.github+json', api_url,
+                               timeout=20, limit=1024)
+            self.assertNotIn('Authorization: Bearer ghp_test', run_mock.call_args.args[0])
+
     def test_download_verifies_checksum_and_extracts_binary_only(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as tmp:
             root = Path(tmp)
