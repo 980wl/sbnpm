@@ -27,4 +27,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install and exercise all three protocols with real sing-box and nftables
-        run: sudo bash tests/smoke-vps.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: sudo GITHUB_TOKEN="$GITHUB_TOKEN" bash tests/smoke-vps.sh
