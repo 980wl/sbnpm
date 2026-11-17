@@ -27,7 +27,7 @@ import time
 import urllib.parse
 import uuid
 
-SCRIPT_VERSION = 'v2.6'
+SCRIPT_VERSION = 'v2.7'
 BASE = Path('/etc/sbnpm')
 CFG = BASE / 'config.json'
 STATE = BASE / 'state.json'
@@ -51,6 +51,11 @@ SYS_BBR_VERSION = Path('/sys/module/tcp_bbr/version')
 DEFAULT_HOP_INTERVAL = 30
 MIN_HOP_INTERVAL = 5
 MAX_HOP_INTERVAL = 3600
+DEFAULT_NODE_NAME = 'sbnpm'
+DEFAULT_HY2_PORT = 55667
+DEFAULT_TUIC_PORT = 55668
+INSTALL_HY2_HOP_RANGE = (56000, 60000)
+INSTALL_HOP_INTERVAL = 10
 NFT_TABLE = 'sbnpm_ports'
 CORE = '/opt/sbnpm/sing-box'
 RELEASE_API = 'https://api.github.com/repos/SagerNet/sing-box/releases/latest'
@@ -539,6 +544,30 @@ def validate_hop_interval(seconds: int) -> int:
     return seconds
 
 
+def validate_node_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        return DEFAULT_NODE_NAME
+    if len(name) > 32:
+        raise Error('节点名称最长 32 个字符。')
+    if any(ch.isspace() for ch in name) or any(ch in '#?/:@&=+%\\' for ch in name):
+        raise Error('节点名称不能包含空格及 # ? / : @ & = + % \\ 等字符。')
+    return name
+
+
+def resolve_node_name(args, old: dict | None = None) -> str:
+    flag = getattr(args, 'node_name', None)
+    if flag is not None:
+        return validate_node_name(flag)
+    if old and old.get('node_name'):
+        return validate_node_name(old['node_name'])
+    if sys.stdin.isatty():
+        raw = input('请输入节点名称（回车默认 sbnpm）：').strip()
+        if raw:
+            return validate_node_name(raw)
+    return DEFAULT_NODE_NAME
+
+
 def validate_bandwidth_mbps(mbps: int, label: str = '带宽') -> int:
     if isinstance(mbps, bool) or not isinstance(mbps, int) or not (0 <= mbps <= 10000):
         raise Error(f'{label}必须在 0–10000 Mbps 之间（0 表示不限速并启用自适应 BBR）。')
@@ -813,13 +842,14 @@ def make_config(s: dict) -> dict:
 def make_links(s: dict, ports=None, *, hop_ports: str | None = None) -> list[str]:
     host = s['domain']
     ports = s['ports'] if ports is None else ports
+    name = s.get('node_name') or DEFAULT_NODE_NAME
     tuic_cc = (s.get('bbr') or {}).get('tuic_cc', 'bbr') if isinstance(s.get('bbr'), dict) else 'bbr'
 
     def query(params: dict) -> str:
         return urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     v = (f'vless://{s["uuid"]}@{host}:{ports["reality"]}?'
          f'{query({"encryption": "none", "security": "reality", "type": "tcp", "sni": s["reality_sni"], "fp": "chrome", "pbk": s["reality_public"], "sid": s["short_id"], "flow": "xtls-rprx-vision"})}'
-         '#sbnpm-Reality-Vision')
+         f'#{name}-Reality-Vision')
     hy_params = {'sni': host, 'alpn': 'h3', 'insecure': '0'}
     if hop_ports:
         hy_params['mport'] = hop_ports
@@ -828,10 +858,10 @@ def make_links(s: dict, ports=None, *, hop_ports: str | None = None) -> list[str
         hy_params['obfs-password'] = s['hy2_obfs']
     hy = (f'hysteria2://{urllib.parse.quote(s["hy2_password"], safe="")}@{host}:{ports["hy2"]}/?'
           f'{query(hy_params)}'
-          '#sbnpm-Hysteria2')
+          f'#{name}-Hysteria2')
     tu = (f'tuic://{s["tuic_uuid"]}:{urllib.parse.quote(s["tuic_password"], safe="")}@{host}:{ports["tuic"]}?'
           f'{query({"sni": host, "alpn": "h3", "congestion_control": tuic_cc})}'
-          '#sbnpm-TUIC-v5')
+          f'#{name}-TUIC-v5')
     return [v, hy, tu]
 
 
@@ -1332,8 +1362,8 @@ def cmd_reinstall(args):
 
     ports = {
         'reality': getattr(args, 'reality_port', None) or (old['ports']['reality'] if old else 8443),
-        'hy2': getattr(args, 'hy2_port', None) or (old['ports']['hy2'] if old else 24443),
-        'tuic': getattr(args, 'tuic_port', None) or (old['ports']['tuic'] if old else 24444),
+        'hy2': getattr(args, 'hy2_port', None) or (old['ports']['hy2'] if old else DEFAULT_HY2_PORT),
+        'tuic': getattr(args, 'tuic_port', None) or (old['ports']['tuic'] if old else DEFAULT_TUIC_PORT),
     }
     listen_arg = getattr(args, 'listen', 'auto')
     listen = listen_arg if listen_arg != 'auto' else (old['listen'] if old else auto_listen())
@@ -1350,6 +1380,7 @@ def cmd_reinstall(args):
     s = {
         'schema_version': 2,
         'domain': domain,
+        'node_name': resolve_node_name(args, old),
         'ports': ports,
         'listen': listen,
         'extra_ports': extra_ports,
@@ -1439,11 +1470,15 @@ def cmd_install(args):
         raise Error(f'域名 {domain} 没有可解析的 A/AAAA 记录；请先将其解析到 VPS。')
     print(f'域名 {domain} DNS 地址：{", ".join(dns)}')
     print('请确认这些地址能直接到达 VPS（Cloudflare DNS 记录需设为 DNS only）。')
+    node_name = resolve_node_name(args)
     ports = {'reality': args.reality_port, 'hy2': args.hy2_port, 'tuic': args.tuic_port}
     listen = args.listen if args.listen != 'auto' else auto_listen()
-    s = {'schema_version': 2, 'domain': domain, 'ports': ports, 'listen': listen,
-         'extra_ports': {proto: parse_ranges(getattr(args, proto + '_extra')) for proto in PROTOCOLS},
-         'hop_interval': hop_arg if hop_arg is not None else DEFAULT_HOP_INTERVAL,
+    extra_ports = {proto: parse_ranges(getattr(args, proto + '_extra', '')) for proto in PROTOCOLS}
+    if not getattr(args, 'hy2_extra', ''):
+        extra_ports['hy2'] = [INSTALL_HY2_HOP_RANGE]
+    s = {'schema_version': 2, 'domain': domain, 'node_name': node_name, 'ports': ports, 'listen': listen,
+         'extra_ports': extra_ports,
+         'hop_interval': hop_arg if hop_arg is not None else INSTALL_HOP_INTERVAL,
          'reality_sni': domain}
     if not getattr(args, 'no_bbr', False):
         s['bbr'] = enable_system_bbr()
@@ -1644,7 +1679,7 @@ def make_hop_profile(s: dict, ports: list, hop_interval: int | None = None) -> d
         s.get('hop_interval', DEFAULT_HOP_INTERVAL) if hop_interval is None else hop_interval
     )
     profile = {
-        'type': 'hysteria2', 'tag': 'sbnpm-hy2-hop', 'server': s['domain'],
+        'type': 'hysteria2', 'tag': f'{s.get("node_name") or DEFAULT_NODE_NAME}-hy2-hop', 'server': s['domain'],
         'server_ports': [f'{a}:{b}' for a, b in ports], 'hop_interval': f'{interval}s',
         'password': s['hy2_password'],
         'tls': {'enabled': True, 'server_name': s['domain'], 'alpn': ['h3']}
@@ -1689,7 +1724,8 @@ def cmd_hop_profile(args):
         validate_hop_interval(hop_interval)
     if args.format == 'uri':
         link = make_links(s, hop_ports=format_ranges(ports))[1]
-        hop_link = link.replace('#sbnpm-Hysteria2', '#sbnpm-Hysteria2-Hop')
+        name = s.get('node_name') or DEFAULT_NODE_NAME
+        hop_link = link.replace(f'#{name}-Hysteria2', f'#{name}-Hysteria2-Hop')
         print(hop_link)
         if getattr(args, 'qr', False):
             qrencode = shutil.which('qrencode')
@@ -2006,14 +2042,15 @@ def main(argv=None):
     sub.add_parser('list-domains', help='识别 NPM 域名和可信证书').set_defaults(func=cmd_list)
     install = sub.add_parser('install', help='安装 Reality Vision、Hysteria2、TUIC v5')
     install.add_argument('--domain', help='客户端连接域名及 Reality SNI')
+    install.add_argument('--node-name', help='节点名称，用于订阅链接后缀（回车默认 sbnpm）')
     install.add_argument('--email', help='无 NPM 时 ACME 申请邮箱')
     install.add_argument('--cert-mode', choices=['auto', 'npm', 'letsencrypt'], default='auto')
     install.add_argument('--reality-port', type=int, default=8443)
-    install.add_argument('--hy2-port', type=int, default=24443)
-    install.add_argument('--tuic-port', type=int, default=24444)
+    install.add_argument('--hy2-port', type=int, default=DEFAULT_HY2_PORT, help='Hysteria2 主端口（默认 55667）')
+    install.add_argument('--tuic-port', type=int, default=DEFAULT_TUIC_PORT, help='TUIC 主端口（默认 55668）')
     for proto in PROTOCOLS:
         install.add_argument(f'--{proto}-extra', default='', help='备用端口，例如 30000,30100-30120')
-    install.add_argument('--hop-interval', type=int, help='Hysteria2 端口跳跃间隔（秒，5–3600，默认 30）')
+    install.add_argument('--hop-interval', type=int, help='Hysteria2 端口跳跃间隔（秒，5–3600，默认 10）')
     install.add_argument('--no-bbr', action='store_true', help='跳过自动开启 BBR 及内核传输参数调优')
     install.add_argument('--listen', choices=['auto', '0.0.0.0', '::'], default='auto')
     install.add_argument('--upgrade', action='store_true', help=argparse.SUPPRESS)
@@ -2026,10 +2063,11 @@ def main(argv=None):
     dom_group.add_argument('--keep-domain', action='store_true', help='沿用当前已安装的域名重新安装')
     dom_group.add_argument('--select-domain', action='store_true', help='交互式扫描并选择域名')
     reinstall.add_argument('--email', help='无 NPM 时 ACME 申请邮箱')
+    reinstall.add_argument('--node-name', help='节点名称，用于订阅链接后缀（默认沿用现有）')
     reinstall.add_argument('--cert-mode', choices=['auto', 'npm', 'letsencrypt'], default='auto')
     reinstall.add_argument('--reality-port', type=int, help='Reality 主端口（默认沿用现有或 8443）')
-    reinstall.add_argument('--hy2-port', type=int, help='Hysteria2 主端口（默认沿用现有或 24443）')
-    reinstall.add_argument('--tuic-port', type=int, help='TUIC 主端口（默认沿用现有或 24444）')
+    reinstall.add_argument('--hy2-port', type=int, help='Hysteria2 主端口（默认沿用现有或 55667）')
+    reinstall.add_argument('--tuic-port', type=int, help='TUIC 主端口（默认沿用现有或 55668）')
     for proto in PROTOCOLS:
         reinstall.add_argument(f'--{proto}-extra', default='', help='备用端口，例如 30000,30100-30120')
     reinstall.add_argument('--hop-interval', type=int, help='Hysteria2 端口跳跃间隔（秒，5–3600）')
