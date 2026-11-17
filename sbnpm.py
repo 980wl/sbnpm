@@ -1105,9 +1105,13 @@ def require_core():
 
 
 def curl_release(*args, timeout: int, limit: int) -> str:
+    headers: list[str] = []
+    token = os.environ.get('GITHUB_TOKEN', '').strip()
+    if token and any('api.github.com' in str(arg) for arg in args):
+        headers = ['-H', f'Authorization: Bearer {token}']
     result = run(['curl', '-q', '--fail', '--silent', '--show-error', '--location',
                   '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '10',
-                  '--max-time', str(timeout), '--max-filesize', str(limit), *args], timeout=timeout + 5)
+                  '--max-time', str(timeout), '--max-filesize', str(limit), *headers, *args], timeout=timeout + 5)
     return result.stdout
 
 
