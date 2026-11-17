@@ -139,6 +139,16 @@ class ConfigTests(unittest.TestCase):
         self.assertIn('node.example.com:24444', links[2])
         self.assertTrue(links[2].startswith('tuic://'))
 
+    def test_uris_use_node_name(self):
+        links = sbnpm.make_links({**self.s, 'node_name': 'hk01'})
+        self.assertTrue(links[0].endswith('#hk01-Reality-Vision'))
+        self.assertTrue(links[1].endswith('#hk01-Hysteria2'))
+        self.assertTrue(links[2].endswith('#hk01-TUIC-v5'))
+        legacy = sbnpm.make_links(self.s)
+        self.assertTrue(legacy[0].endswith('#sbnpm-Reality-Vision'))
+        self.assertTrue(legacy[1].endswith('#sbnpm-Hysteria2'))
+        self.assertTrue(legacy[2].endswith('#sbnpm-TUIC-v5'))
+
     def test_ports_conflict_mock(self):
         with mock.patch.object(sbnpm, 'docker_containers', return_value=[]), \
              mock.patch.object(sbnpm, 'port_available', return_value=False):
@@ -341,6 +351,40 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(saved_state['hop_interval'], 15)
                 hop_json = json.loads((base / sbnpm.HOP_PROFILE_NAME).read_text())
                 self.assertEqual(hop_json['hop_interval'], '15s')
+
+    def test_node_name_validation(self):
+        self.assertEqual(sbnpm.validate_node_name(''), 'sbnpm')
+        self.assertEqual(sbnpm.validate_node_name('  hk01 '), 'hk01')
+        self.assertEqual(sbnpm.validate_node_name('香港-01'), '香港-01')
+        for bad in ('a b', 'a#b', 'a/b', 'a?b', 'x' * 33):
+            with self.subTest(bad=bad), self.assertRaises(sbnpm.Error):
+                sbnpm.validate_node_name(bad)
+
+    def test_resolve_node_name_prefers_flag_then_old_state(self):
+        self.assertEqual(sbnpm.resolve_node_name(SimpleNamespace(node_name='tokyo')), 'tokyo')
+        self.assertEqual(
+            sbnpm.resolve_node_name(SimpleNamespace(node_name=None), {'node_name': 'hk01'}), 'hk01')
+        with mock.patch.object(sys, 'stdin', io.StringIO()):
+            self.assertEqual(sbnpm.resolve_node_name(SimpleNamespace(node_name=None)), 'sbnpm')
+
+    def test_install_default_ports_and_hop(self):
+        self.assertEqual(sbnpm.DEFAULT_HY2_PORT, 55667)
+        self.assertEqual(sbnpm.DEFAULT_TUIC_PORT, 55668)
+        self.assertEqual(sbnpm.INSTALL_HY2_HOP_RANGE, (56000, 60000))
+        self.assertEqual(sbnpm.INSTALL_HOP_INTERVAL, 10)
+
+    def test_hop_profile_uses_node_name(self):
+        s = {**self.s, 'node_name': 'hk01', 'extra_ports': {'hy2': [(56000, 60000)]},
+             'hop_interval': 10}
+        profile = sbnpm.make_hop_profile(s, sbnpm.hopping_ports(s))
+        self.assertEqual(profile['tag'], 'hk01-hy2-hop')
+        self.assertEqual(profile['server_ports'], ['24443:24443', '56000:60000'])
+        self.assertEqual(profile['hop_interval'], '10s')
+        with mock.patch.object(sbnpm, 'read_state', return_value=s), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            sbnpm.cmd_hop_profile(SimpleNamespace(format='uri', qr=False))
+        self.assertIn('#hk01-Hysteria2-Hop', out.getvalue())
+        self.assertIn('mport=24443%2C56000-60000', out.getvalue())
 
     def test_ubuntu_and_bbr_kernel_version_protocol_optimization(self):
         ubuntu_24 = {'id': 'ubuntu', 'version_id': '24.04', 'pretty_name': 'Ubuntu 24.04.1 LTS',
